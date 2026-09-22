@@ -1,0 +1,12 @@
+# Dependencias / entorno
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+*.log
+
+# Salidas de exportación de la app
+*.zip
+frames/

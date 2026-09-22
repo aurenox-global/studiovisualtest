@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Sintaxis y estructura
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Comprobar sintaxis JS
+        run: |
+          for f in assets/js/*.js sw.js; do node --check "$f"; done
+      - name: Validar manifest y HTML básico
+        run: |
+          python3 -c "import json; json.load(open('manifest.webmanifest')); print('manifest OK')"
+          python3 - <<'PY'
+          import pathlib, sys
+          html = pathlib.Path('index.html').read_text(encoding='utf-8')
+          need = ['<title>', 'manifest.webmanifest', 'assets/js/app.js', 'og:image', 'theme-color']
+          missing = [n for n in need if n not in html]
+          sys.exit(f'faltan en index.html: {missing}' if missing else 0)
+          PY
+
+  e2e:
+    name: Prueba de humo (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar Playwright
+        run: |
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+      - name: Ejecutar prueba de humo
+        run: python3 tests/smoke.py
