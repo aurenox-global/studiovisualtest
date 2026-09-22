@@ -1,5 +1,5 @@
 /* InfoStudio Pro — service worker (offline first, no third parties) */
-const VERSION = 'infostudio-v3.0.0';
+const VERSION = 'infostudio-v3.1.0';
 const CORE = [
   './',
   './index.html',

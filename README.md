@@ -23,7 +23,7 @@ Sin servidores, sin cuentas, sin dependencias de terceros y funcionando **offlin
 | **Storyboard** | Escenas (planos) en tira tipo *film-strip* con miniaturas reales, duración, reordenar, duplicar y transiciones |
 | **Lienzo** | 16:9 · 9:16 · 1:1 · 4:5 · 4:3, zoom, rejilla, imán *(snapping)* a bordes/centros y guías de área segura |
 | **Infografías** | Título, lista, cita, etiqueta, KPI animado, 7 tipos de gráfico (barras, barras H, líneas, área, circular, anillo, radar), progreso, comparativa A/B, pasos, timeline, aviso, bloque de código con resaltado, formas, líneas/flechas, 42 iconos vectoriales e imágenes |
-| **Animación** | 12 entradas + salidas por elemento con retardo, duración y 10 curvas de *easing*; gráficos y contadores se animan solos |
+| **Animación** | 12 entradas + salidas por elemento con retardo, duración y 10 curvas de *easing*; **keyframes por propiedad** (posición, tamaño, rotación y opacidad) con interpolación y *easing* por tramo; gráficos y contadores se animan solos |
 | **Edición** | Selección múltiple, mover/redimensionar/rotar (`Shift` para proporción y ángulos), marquesina, alinear, distribuir, capas con visibilidad/bloqueo y deshacer/rehacer ilimitado en sesión |
 | **Locución** | Guion por escena, previsualización con la voz del sistema, estimación de duración y subtítulos `.srt`/`.vtt` automáticos |
 | **Exportar** | 🎥 Vídeo WebM/MP4, 🖼️ PNG de escena, secuencia PNG en ZIP, miniatura 1280×720, 📝 subtítulos, guion `.md`, 🌐 HTML autónomo con reproductor y 💾 proyecto `.json` |
@@ -74,9 +74,21 @@ python3 -m http.server 8080
 
 ### Atajos de teclado
 
-`V` seleccionar · `X` texto · `R` rectángulo · `O` círculo · `G` triángulo · `S` estrella · `P` polígono · `L` línea · `A` flecha · `D` dibujo libre · `I` imagen · `Espacio` reproducir/pausar · `Ctrl+Z` / `Ctrl+Shift+Z` deshacer/rehacer · `Ctrl+D` duplicar · `Ctrl+A` seleccionar todo · `Supr` borrar · `Ctrl+S` guardar · `Ctrl`+rueda zoom · `←↑→↓` mover 1 px (`Shift` 10 px) · `Alt`+arrastrar duplicar · `PageUp`/`PageDown` cambiar de escena.
+`V` seleccionar · `X` texto · `R` rectángulo · `O` círculo · `G` triángulo · `S` estrella · `P` polígono · `L` línea · `A` flecha · `D` dibujo libre · `I` imagen · `Espacio` reproducir/pausar · `Ctrl+Z` / `Ctrl+Shift+Z` deshacer/rehacer · `Ctrl+D` duplicar · `Ctrl+A` seleccionar todo · `Supr` borrar · `Ctrl+S` guardar · `Ctrl`+rueda zoom · `←↑→↓` mover 1 px (`Shift` 10 px) · `K` capturar keyframe · `,` / `.` keyframe anterior/siguiente · `Alt`+arrastrar duplicar · `PageUp`/`PageDown` cambiar de escena.
 
 > **Nota sobre el autoajuste de texto:** los cuadros de texto **reducen su tipografía automáticamente** para que el texto siempre entre en su caja. El valor *Tamaño* del inspector es el tamaño máximo.
+
+### 🎞️ Keyframes por propiedad
+
+Selecciona un elemento y abre **Editar → 🎞️ Fotogramas clave**:
+
+1. Coloca el cabezal donde quieras y pulsa **➕ Capturar aquí** (o `K`). Si el elemento aún no está animado, se crea el primer keyframe.
+2. Mueve el cabezal más adelante, cambia posición/tamaño/rotación/opacidad y captura otro. El elemento se **interpola** entre ambos.
+3. Cada keyframe tiene su **easing** (tramo que termina en él) y puedes cambiar su tiempo en ms. `,` / `.` saltan al keyframe anterior/siguiente; 🧹 desactiva el modo y deja el elemento fijo donde esté el cabezal.
+
+> **Modo keyframes:** cuando un elemento ya tiene keyframes, mover o redimensionarlo en el lienzo escribe en el keyframe que está bajo el cabezal (y lo crea si no existe). Así lo que ves es siempre lo que se anima. En el editor, el marco de selección sigue la geometría interpolada.
+
+> ⚠️ El **HTML autónomo** exporta una imagen fija por escena, así que las animaciones (incluidos los keyframes) no se reproducen ahí. Para vídeo animado usa 🎥 Vídeo o la **secuencia PNG + ffmpeg**.
 
 ---
 
@@ -127,6 +139,7 @@ ffmpeg -framerate 30 -i frames/frame_%05d.png -i narracion.wav \
 **Principios**
 
 - **Render determinista**: `render.frame(ctx, project, scene, t)` no depende del DOM ni del tiempo real → lo mismo se ve en el editor, en la miniatura y en la exportación (*frame-accurate*).
+- **Geometría efectiva única**: el render y el editor usan `IS.store.effectiveGeom(el, t)`, que interpola los keyframes; no hay dos verdades sobre dónde está un elemento en cada instante.
 - **Estado único**: `IS.store` es la única fuente de verdad; la UI reacciona a eventos (`project`, `selection`, `scene`, `changed`). Historial por *snapshots* para un deshacer fiable.
 - **Sin dependencias ni build step**: JS clásico con namespaces (`window.IS`), sin CDN, compatible con `file://` para desarrollo rápido.
 
@@ -139,14 +152,13 @@ pip install playwright && playwright install chromium
 python3 tests/smoke.py
 ```
 
-Arranca la app en Chromium headless, recorre edición, plantillas y exportación y verifica **0 errores de consola** en cada paso (incluye regresión del bug de geometría de las plantillas de vídeo).
+Arranca la app en Chromium headless, recorre edición, plantillas, exportación y **keyframes** (creación, interpolación, saneado del modelo y animación real en el render) y verifica **0 errores de consola** en cada paso (incluye la regresión del bug de geometría de las plantillas de vídeo).
 
 ---
 
 ## 🗺️ Roadmap
 
 - Edición de texto *in situ* sobre el lienzo (hoy en el inspector).
-- Curvas de animación por fotogramas clave (keyframes por propiedad).
 - Subtítulos incrustados por reconocimiento de voz (Whisper vía WASM).
 - Exportación directa a MP4 por WebCodecs (sin tiempo real).
 - Música de fondo con *ducking* automático.
@@ -168,4 +180,5 @@ MIT — ver [`LICENSE`](LICENSE).
 
 > Reescritura a nivel de producción del proyecto `studiovisualtest`
 > (el antiguo “UX/UI Design Studio Pro”, una única página de ~120 KB). Consulta
-> [`AUDIT.md`](AUDIT.md) para la auditoría del original y el detalle de todo lo que cambia.
+> [`AUDIT.md`](AUDIT.md) para la auditoría del original y el detalle de todo lo que cambia,
+> y [`CHANGELOG.md`](CHANGELOG.md) para el historial de versiones.

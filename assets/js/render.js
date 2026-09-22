@@ -121,11 +121,12 @@
     if (!el.visible) return;
     const st = animState(el, t, dur);
     if (st.o <= 0.001 && !st.clip) return;
-    const w = el.w, h = el.h;
+    const g = S.effectiveGeom(el, t); // geometría animada por keyframes (o base)
+    const w = g.w, h = g.h;
     ctx.save();
     ctx.globalAlpha *= st.o;
-    ctx.translate(el.x + w / 2 + (st.tx || 0) * w, el.y + h / 2 + (st.ty || 0) * h);
-    if (el.rotation) ctx.rotate(el.rotation * Math.PI / 180);
+    ctx.translate(g.x + w / 2 + (st.tx || 0) * w, g.y + h / 2 + (st.ty || 0) * h);
+    if (g.rotation) ctx.rotate(g.rotation * Math.PI / 180);
     if (st.s !== 1) ctx.scale(st.s, st.s);
     if (st.clip) {
       let x = -w / 2, y = -h / 2, cw = w, ch = h;
@@ -135,7 +136,7 @@
       ctx.beginPath(); ctx.rect(x, y, cw, ch); ctx.clip();
     }
     ctx.translate(-w / 2, -h / 2);
-    ctx.globalAlpha *= (el.opacity == null ? 1 : el.opacity);
+    ctx.globalAlpha *= (g.opacity == null ? 1 : g.opacity);
     try { DRAW[el.type] ? DRAW[el.type](ctx, el, w, h, st, accent, quality) : DRAW.text(ctx, el, w, h, st, accent, quality); }
     catch (err) { console.warn('draw error', el.type, err); }
     ctx.restore();
@@ -681,5 +682,5 @@
   let _redrawPending = false;
   function requestRedraw(fn) { _redrawPending = true; (IS.render._cb || (() => { }))(); }
 
-  IS.render = { frame, renderStage, thumb, drawElement, drawBackground: L.drawBackground, animState, getImage, preload, requestRedraw, rr, fmtVal };
+  IS.render = { frame, renderStage, thumb, drawElement, drawBackground: L.drawBackground, animState, getImage, preload, requestRedraw, rr, fmtVal, effectiveGeom: (el, t) => S.effectiveGeom(el, t) };
 })(window.IS = window.IS || {});

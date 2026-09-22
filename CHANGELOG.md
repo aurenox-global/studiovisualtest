@@ -4,6 +4,30 @@ Todas las versiones notables de **InfoStudio Pro**. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es/1.1.0/) y el proyecto usa
 versionado semántico.
 
+## [3.1.0] — 2026-09-22
+
+### Añadido
+- **Keyframes por propiedad**: anima posición, tamaño, rotación y opacidad con fotogramas clave
+  (hasta 240 por elemento), interpolados en el render determinista. Easing por tramo, *hold*
+  antes del primero y después del último.
+- Panel **🎞️ Fotogramas clave** en el inspector: capturar en el cabezal, lista con tiempo
+  editable, easing, ir/borrar y previsualización. Indicador del keyframe activo en el bloque
+  Transformar.
+- **Modo keyframes** en el lienzo: al mover/redimensionar/rotar un elemento que ya tiene
+  keyframes, el cambio se escribe en el fotograma del cabezal (se crea si no existe). El
+  overlay, el *snapping* y el *hit-testing* usan la geometría interpolada.
+- Atajos `K` (capturar keyframe) y `,` / `.` (keyframe anterior / siguiente).
+- `IS.store.effectiveGeom(el, t)` como única fuente de la geometría efectiva (render, overlay y exportación).
+
+### Cambiado
+- Versión de proyecto **4** (`PROJECT_VERSION`) con migración transparente: los proyectos
+  guardados con la v3 se cargan igual (clave `infostudio.project.v4` con *fallback* a la v3).
+- Exportación HTML autónoma: documentada la limitación de que exporta una imagen fija por escena
+  (las animaciones no se reproducen ahí).
+
+### Corregido
+- El deshacer de los cambios de geometría hechos desde el inspector ahora guarda el estado previo.
+
 ## [3.0.0] — 2026-09-22
 
 Primera versión de producción: reescritura completa del proyecto original

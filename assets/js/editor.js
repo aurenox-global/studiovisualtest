@@ -22,6 +22,10 @@
 
   const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
+  /** Vista del elemento con su geometría EFECTIVA (keyframes interpolados) en el cabezal.
+   *  Se usa para overlay, hit-testing, imán y arrastres: lo que se ve es lo que se edita. */
+  function view(el, t) { return Object.assign({}, el, S.effectiveGeom(el, t == null ? S.runtime.t : t)); }
+
   /* ---------------- sizing ---------------- */
   function designScale() {
     const d = S.design(), area = E.area.getBoundingClientRect();
@@ -77,7 +81,7 @@
       ctx.setLineDash([]);
     }
     if (!S.runtime.playing) {
-      S.selected().forEach(el => drawSelection(ctx, el, el === S.selected()[S.selected().length - 1] && S.sel.ids.length === 1));
+      S.selected().forEach(el => drawSelection(ctx, view(el), el === S.selected()[S.selected().length - 1] && S.sel.ids.length === 1));
       E.guides.forEach(g => {
         ctx.strokeStyle = '#fd79a8'; ctx.lineWidth = 1.4 / E.scale;
         ctx.beginPath(); ctx.moveTo(g.x, 0); ctx.lineTo(g.x, d.h); ctx.stroke();
@@ -137,9 +141,9 @@
   function hitElement(p) {
     const list = S.scene().elements;
     for (let i = list.length - 1; i >= 0; i--) {
-      const el = list[i]; if (!el.visible) continue;
+      const el = view(list[i]); if (!el.visible) continue;
       const lp = localPoint(el, p);
-      if (lp.x >= el.x && lp.x <= el.x + el.w && lp.y >= el.y && lp.y <= el.y + el.h) return el;
+      if (lp.x >= el.x && lp.x <= el.x + el.w && lp.y >= el.y && lp.y <= el.y + el.h) return S.scene().elements[i];
     }
     return null;
   }
@@ -169,8 +173,9 @@
     const targets = { v: [0, d.w / 2, d.w], h: [0, d.h / 2, d.h] };
     S.scene().elements.forEach(e => {
       if (e.id === ignoreId || !e.visible) return;
-      targets.v.push(e.x, e.x + e.w / 2, e.x + e.w);
-      targets.h.push(e.y, e.y + e.h / 2, e.y + e.h);
+      const g = view(e);
+      targets.v.push(g.x, g.x + g.w / 2, g.x + g.w);
+      targets.h.push(g.y, g.y + g.h / 2, g.y + g.h);
     });
     const g = [];
     let dx = 0, dy = 0;
@@ -204,11 +209,11 @@
     if (el) {
       if (shift) { S.select([el.id], true); }
       else if (!S.sel.ids.includes(el.id)) S.select([el.id]);
-      const handle = cur.length === 1 && S.sel.ids.length === 1 ? hitHandle(S.selected()[0], p) : null;
+      const handle = cur.length === 1 && S.sel.ids.length === 1 ? hitHandle(view(S.selected()[0]), p) : null;
       if (handle) {
-        E.drag = { mode: handle === 'rot' ? 'rotate' : 'resize', handle, start: p, el: U.deep(S.selected()[0]), moved: false };
+        E.drag = { mode: handle === 'rot' ? 'rotate' : 'resize', handle, start: p, el: U.deep(view(S.selected()[0])), moved: false };
       } else {
-        E.drag = { mode: 'move', start: p, items: S.selected().map(x => ({ id: x.id, x: x.x, y: x.y })), moved: false };
+        E.drag = { mode: 'move', start: p, items: S.selected().map(x => { const g = view(x); return { id: x.id, x: g.x, y: g.y }; }), moved: false };
       }
     } else {
       if (!shift) S.select([]);
@@ -282,13 +287,13 @@
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       const anchor = S.elementById(d.items[0].id);
       if (S.prefs.snap && anchor) {
-        const first = d.items[0];
-        const s = snapBox({ x: first.x + dx, y: first.y + dy, w: anchor.w, h: anchor.h }, anchor.id);
+        const first = d.items[0], av = view(anchor);
+        const s = snapBox({ x: first.x + dx, y: first.y + dy, w: av.w, h: av.h }, anchor.id);
         dx += s.dx; dy += s.dy; E.guides = s.guides;
       } else E.guides = [];
       S.sel.ids.forEach(id => {
         const it = d.items.find(x => x.id === id); const el = S.elementById(id); if (!it || !el) return;
-        el.x = it.x + dx; el.y = it.y + dy;
+        S.kfSet(el, { x: it.x + dx, y: it.y + dy });
       });
       d.moved = true; S.autosave(); redraw(); redrawOverlay(); return;
     }
@@ -306,15 +311,16 @@
       if (hd.includes('n')) { h = o.h - cdy; y = o.y + cdy; }
       if (e.shiftKey && hd.length === 2) { const r = o.w / o.h; if (w / h > r) w = h * r; else h = w / r; if (hd.includes('w')) x = o.x + (o.w - w); if (hd.includes('n')) y = o.y + (o.h - h); }
       w = Math.max(8, w); h = Math.max(el.type === 'line' ? 0 : 8, h);
-      el.x = Math.round(x); el.y = Math.round(y); el.w = Math.round(w); el.h = Math.round(h);
+      S.kfSet(el, { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
       d.moved = true; S.autosave(); redraw(); redrawOverlay(); return;
     }
     if (d.mode === 'rotate') {
       const el = S.elementById(S.sel.ids[0]); if (!el) return;
-      const cx = el.x + el.w / 2, cy = el.y + el.h / 2;
+      const g = view(el);
+      const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
       let ang = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI + 90;
       if (e.shiftKey) ang = Math.round(ang / 15) * 15;
-      el.rotation = Math.round(ang);
+      S.kfSet(el, { rotation: Math.round(ang) });
       d.moved = true; redraw(); redrawOverlay(); return;
     }
     if (d.mode === 'marquee') {
@@ -359,6 +365,7 @@
     if (d.mode === 'move' && d.moved) S.pushHistory('mover');
     if (d.mode === 'resize' && d.moved) S.pushHistory('redimensionar');
     if (d.mode === 'rotate' && d.moved) S.pushHistory('rotar');
+    if (d.moved) { const n = S.selected().reduce((a, el) => a + (el.keyframes ? el.keyframes.length : 0), 0); if (n) U.toast('🎞️ keyframes: ' + n); }
     E.guides = []; redraw(); redrawOverlay();
     IS.ui && IS.ui.refreshInspectorValues();
   }
@@ -384,7 +391,7 @@
     if (square) { const m = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w) * m; h = Math.sign(h) * m; }
     return { x: Math.min(a.x, a.x + w), y: Math.min(a.y, a.y + h), w: Math.abs(w), h: Math.abs(h) };
   }
-  function intersects(el, b) { return !(el.x > b.x + b.w || el.x + el.w < b.x || el.y > b.y + b.h || el.y + el.h < b.y); }
+  function intersects(el, b) { el = view(el); return !(el.x > b.x + b.w || el.x + el.w < b.x || el.y > b.y + b.h || el.y + el.h < b.y); }
 
   /* ---------------- tools ---------------- */
   function setTool(t) {
@@ -426,7 +433,7 @@
   }
   function pause() { S.runtime.playing = false; if (raf) cancelAnimationFrame(raf); raf = null; IS.ui && IS.ui.setPlaying(false); redrawOverlay(); }
   function toggle() { S.runtime.playing ? pause() : play(); }
-  function seek(t) { S.runtime.t = U.clamp(t, 0, S.scene().durationMs || 4000); redraw(); IS.ui && IS.ui.updateTransport(); }
+  function seek(t) { S.runtime.t = U.clamp(t, 0, S.scene().durationMs || 4000); redraw(); redrawOverlay(); IS.ui && IS.ui.updateTransport(); }
 
   function init() {
     E.stage = document.getElementById('stageCanvas');

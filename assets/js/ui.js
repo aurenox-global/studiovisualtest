@@ -397,10 +397,64 @@
     IS.editor.redraw(); UI.renderScenesSoon();
   }
   function patchGeom(k, v, structural) {
-    S.selected().forEach(e => { e[k] = v; });
-    S.touch();
-    if (structural) S.commit('editar ' + k, () => {}); else S.autosave();
+    const apply = () => S.selected().forEach(e => S.kfSet(e, { [k]: v }));
+    if (structural) S.commit('editar ' + k, apply); else { apply(); S.autosave(); }
     IS.editor.redraw(); IS.editor.redrawOverlay();
+  }
+  /** Texto de ayuda del bloque Transformar según el estado de keyframes. */
+  function kfHint(e) {
+    const list = e.keyframes || [];
+    if (!list.length) return '';
+    const a = S.activeKeyframe(e);
+    return a ? '🎞️ Editando el keyframe en ' + U.fmtTime(a.t) + ' (mover/redimensionar se guarda ahí).'
+             : '🎞️ Modo keyframes (' + list.length + '): al mover aquí se creará uno en ' + U.fmtTime(S.runtime.t) + '.';
+  }
+  /** Salta al keyframe anterior/siguiente de la selección. */
+  UI.kfJump = function (dir) {
+    const times = S.keyframeTimes();
+    if (!times.length) { U.toast('Este elemento no tiene keyframes'); return; }
+    const t = S.runtime.t;
+    let target = null;
+    if (dir > 0) target = times.find(x => x > t + 1);
+    else target = times.slice().reverse().find(x => x < t - 1);
+    if (target == null) target = dir > 0 ? times[0] : times[times.length - 1];
+    IS.editor.pause(); IS.editor.seek(target); UI.renderEditSoon();
+  };
+  UI.captureKeyframe = function () {
+    const t = S.captureKeyframe(S.runtime.t);
+    if (t != null) { U.toast('🎞️ Keyframe en ' + U.fmtTime(t)); IS.editor.redraw(); UI.renderEditSoon(); }
+  };
+
+  function keyframeSection(e0) {
+    const box = el('div', { class: 'psec' }, [el('h3', { text: '🎞️ Fotogramas clave' })]);
+    const list = (e0.keyframes || []).slice();
+    const active = list.length ? S.activeKeyframe(e0) : null;
+    box.appendChild(el('p', { class: 'hint', text: !list.length
+      ? 'Anima posición, tamaño, rotación y opacidad con fotogramas clave. Captura uno aquí, sitúa el cabezal más adelante y captura otro: el elemento se interpola entre ambos.'
+      : (active ? '✏️ Con el cabezal sobre un keyframe, mover/redimensionar edita ese fotograma.' : '⏱ Entre keyframes: mover el elemento creará un fotograma clave en ' + U.fmtTime(S.runtime.t) + '.') }));
+    box.appendChild(el('div', { class: 'grid3', style: { marginTop: '6px' } }, [
+      el('button', { class: 'chip', text: '➕ Capturar aquí', title: 'Añadir o actualizar un keyframe en el cabezal (K)', onclick: () => UI.captureKeyframe() }),
+      el('button', { class: 'chip', text: '⏪', title: 'Keyframe anterior (,)', onclick: () => UI.kfJump(-1) }),
+      el('button', { class: 'chip', text: '⏩', title: 'Keyframe siguiente (.)', onclick: () => UI.kfJump(1) })
+    ]));
+    if (list.length) {
+      const wrap = el('div', { style: { marginTop: '9px' } });
+      list.forEach(k => {
+        const on = active && active.id === k.id;
+        wrap.appendChild(el('div', { class: 'row', style: { gap: '5px', alignItems: 'center', marginBottom: '4px' } }, [
+          el('button', { class: 'chip' + (on ? ' on' : ''), text: U.fmtTime(k.t), title: 'Ir a este keyframe', onclick: () => { IS.editor.pause(); IS.editor.seek(k.t); UI.renderEditSoon(); } }),
+          el('input', { type: 'number', class: 'inp', style: { width: '74px' }, value: k.t, step: 50, title: 'Tiempo (ms)', onchange: ev => { S.updateKeyframe(k.id, { t: +ev.target.value }); UI.renderEditSoon(); IS.editor.redraw(); } }),
+          el('select', { class: 'inp', style: { flex: '1', minWidth: '70px' }, title: 'Interpolación desde el keyframe anterior', onchange: ev => { S.updateKeyframe(k.id, { easing: ev.target.value }); IS.editor.redraw(); } }, U.EASINGS.map(x => el('option', { value: x, text: x, selected: x === k.easing }))),
+          el('button', { class: 'chip', text: '🗑️', title: 'Borrar este keyframe', onclick: () => { S.deleteKeyframe(k.id); UI.renderEditSoon(); IS.editor.redraw(); } })
+        ]));
+      });
+      box.appendChild(wrap);
+      box.appendChild(el('div', { class: 'grid2', style: { marginTop: '4px' } }, [
+        el('button', { class: 'btn sm', text: '▶️ Previsualizar', onclick: () => { S.runtime.t = 0; IS.editor.play(); } }),
+        el('button', { class: 'btn sm danger', text: '🧹 Quitar keyframes', onclick: () => { S.clearKeyframes(); UI.renderEditSoon(); IS.editor.redraw(); U.toast('Keyframes eliminados'); } })
+      ]));
+    }
+    return box;
   }
 
   UI.renderInspector = function () {
@@ -433,14 +487,15 @@
     ]));
 
     // transform
+    const gv = (e0.keyframes && e0.keyframes.length) ? S.effectiveGeom(e0) : e0; // modo keyframes → valores del cabezal
     pane.appendChild(el('div', { class: 'psec' }, [
       el('h3', { text: 'Transformar' }),
       el('div', { class: 'grid2' }, [
-        numInput('X', 'x', e0.x), numInput('Y', 'y', e0.y), numInput('Ancho', 'w', e0.w), numInput('Alto', 'h', e0.h)
+        numInput('X', 'x', gv.x), numInput('Y', 'y', gv.y), numInput('Ancho', 'w', gv.w), numInput('Alto', 'h', gv.h)
       ]),
-      el('div', { class: 'row', style: { marginTop: '7px' } }, [el('label', { text: 'Rotación' }), numInput('', 'rotation', e0.rotation || 0)]),
-      el('div', { class: 'row' }, [el('label', { text: 'Opacidad' }), el('input', { type: 'range', class: 'sl', min: 0, max: 100, value: Math.round((e0.opacity == null ? 1 : e0.opacity) * 100), oninput: ev => S.selected().forEach(x => x.opacity = +ev.target.value / 100) })]),
-      el('div', { class: 'hint', id: 'geomHint', text: '' })
+      el('div', { class: 'row', style: { marginTop: '7px' } }, [el('label', { text: 'Rotación' }), numInput('', 'rotation', gv.rotation || 0)]),
+      el('div', { class: 'row' }, [el('label', { text: 'Opacidad' }), el('input', { type: 'range', class: 'sl', min: 0, max: 100, value: Math.round((gv.opacity == null ? 1 : gv.opacity) * 100), oninput: ev => S.selected().forEach(x => S.kfSet(x, { opacity: +ev.target.value / 100 })) })]),
+      el('div', { class: 'hint', id: 'geomHint', text: kfHint(e0) })
     ]));
 
     // align
@@ -486,6 +541,9 @@
       el('div', { class: 'row' }, [el('label', { text: 'Duración ms' }), numSimple(e0.anim.out.dur, v => { S.selected().forEach(x => x.anim.out.dur = v); S.commit('animación'); IS.editor.redraw(); })]),
       el('div', { class: 'row' }, [el('label', { text: 'Curva' }), sel1(easings, e0.anim.out.easing, v => { S.selected().forEach(x => x.anim.out.easing = v); S.commit('animación'); IS.editor.redraw(); })])
     ]));
+
+    // keyframes
+    pane.appendChild(keyframeSection(e0));
 
     pane.appendChild(el('div', { class: 'psec' }, [
       el('div', { class: 'grid2' }, [
@@ -785,6 +843,7 @@
 
     S.on('project', () => { UI.renderScenesSoon(); UI.updateTransport(); });
     S.on('selection', () => { UI.renderInspector(); UI.renderLayers(); UI.redrawStageOnly(); if (window.innerWidth <= 860) $('#panel').classList.add('open'); });
+    S.on('keyframes', () => { UI.renderEditSoon(); IS.editor.redrawOverlay(); });
     S.on('changed', () => { if (!S.runtime.playing) { UI.renderScenesSoon(); } });
     S.on('saved', () => setSaveState(false));
     S.on('settings', () => { const a = $('#aspectSel'); if (a) a.value = S.project.settings.aspect; });

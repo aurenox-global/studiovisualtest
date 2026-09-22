@@ -57,14 +57,19 @@
         const step = e.shiftKey ? 10 : 1;
         S.selected().forEach(el => {
           if (el.locked) return;
-          if (e.key === 'ArrowLeft') el.x -= step;
-          if (e.key === 'ArrowRight') el.x += step;
-          if (e.key === 'ArrowUp') el.y -= step;
-          if (e.key === 'ArrowDown') el.y += step;
+          const g = S.effectiveGeom(el);
+          const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+          const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+          if (dx || dy) S.kfSet(el, { x: Math.round(g.x + dx), y: Math.round(g.y + dy) });
         });
         S.commit('mover'); IS.editor.redraw(); IS.editor.redrawOverlay(); IS.ui.renderInspector();
         return;
       }
+
+      // keyframes
+      if (e.key.toLowerCase() === 'k' && S.sel.ids.length) { e.preventDefault(); IS.ui.captureKeyframe(); return; }
+      if (e.key === ',') { e.preventDefault(); IS.ui.kfJump(-1); return; }
+      if (e.key === '.') { e.preventDefault(); IS.ui.kfJump(1); return; }
 
       const map = { v: 'select', x: 'text', r: 'rect', o: 'ellipse', g: 'triangle', s: 'star', p: 'polygon', l: 'line', a: 'arrow', d: 'pen', i: 'image' };
       if (!mod && map[e.key.toLowerCase()]) { IS.editor.setTool(map[e.key.toLowerCase()]); return; }

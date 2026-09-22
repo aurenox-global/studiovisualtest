@@ -7,8 +7,9 @@
   'use strict';
   const U = IS.util;
 
-  const PROJECT_VERSION = 3;
-  const LS_KEY = 'infostudio.project.v3';
+  const PROJECT_VERSION = 4;
+  const LS_KEY = 'infostudio.project.v4';
+  const LS_KEY_OLD = 'infostudio.project.v3'; // compatibilidad: proyectos guardados con la v3
   const PREFS_KEY = 'infostudio.prefs.v1';
 
   const ASPECTS = {
@@ -26,6 +27,7 @@
   const BASE = () => ({
     id: U.uid('el'), name: '', x: 0, y: 0, w: 400, h: 200, rotation: 0,
     opacity: 1, locked: false, visible: true,
+    keyframes: [], // animación por fotogramas clave (ver kfGeom)
     anim: { in: { preset: 'fade', dur: 600, delay: 0, easing: 'outCubic' }, out: { preset: 'none', dur: 400, easing: 'inOutCubic' } }
   });
 
@@ -220,6 +222,143 @@
   }
   function selectAll() { S.sel.ids = scene().elements.filter(e => !e.locked).map(e => e.id); emit('selection'); }
 
+  /* ================= keyframes (animación por fotogramas clave) =================
+   * Un keyframe es { id, t (ms desde el inicio de la escena), props:{x,y,w,h,rotation,opacity}, easing }
+   * `easing` describe la interpolación del tramo que TERMINA en ese keyframe.
+   * Antes del primero y después del último se mantiene el valor (hold).
+   * Cuando un elemento tiene keyframes, toda la geometría se edita en el keyframe
+   * que está bajo el cabezal (se crea uno si no existe): "modo keyframes".
+   * ============================================================================ */
+  const KEYFRAME_PROPS = ['x', 'y', 'w', 'h', 'rotation', 'opacity'];
+  const KF_EPS = 40;   // ms de tolerancia para considerar el cabezal "sobre" un keyframe
+  const KF_MAX = 240;  // tope de seguridad por elemento
+
+  const geomOf = (el) => ({ x: el.x, y: el.y, w: el.w, h: el.h, rotation: el.rotation || 0, opacity: el.opacity == null ? 1 : el.opacity });
+
+  function sanitizeKeyframes(list, el) {
+    if (!Array.isArray(list)) return [];
+    const base = geomOf(el), out = [];
+    list.forEach(k => {
+      if (!k || typeof k !== 'object') return;
+      const t = Number(k.t);
+      if (!Number.isFinite(t) || t < 0) return;
+      let props = {};
+      if (k.props && typeof k.props === 'object') KEYFRAME_PROPS.forEach(p => { if (Number.isFinite(k.props[p])) props[p] = k.props[p]; });
+      if (!Object.keys(props).length) props = Object.assign({}, base);
+      out.push({ id: k.id || U.uid('kf'), t: Math.round(t), props, easing: (k.easing && U.ease[k.easing]) ? k.easing : 'inOutCubic' });
+    });
+    out.sort((a, b) => a.t - b.t);
+    return out.filter((k, i) => i === 0 || k.t > out[i - 1].t).slice(0, KF_MAX);
+  }
+
+  /** Geometría interpolada en t, o null si el elemento no tiene keyframes. */
+  function kfGeom(el, t) {
+    const kfs = el.keyframes;
+    if (!kfs || !kfs.length) return null;
+    const out = {};
+    const val = (k, p) => (Number.isFinite(k.props[p]) ? k.props[p] : el[p]);
+    const hold = (k) => { KEYFRAME_PROPS.forEach(p => { out[p] = val(k, p); }); };
+    const first = kfs[0], last = kfs[kfs.length - 1];
+    if (kfs.length === 1 || t <= first.t) { hold(first); return out; }
+    if (t >= last.t) { hold(last); return out; }
+    let a = first, b = kfs[1];
+    for (let i = 0; i < kfs.length - 1; i++) { if (t >= kfs[i].t && t <= kfs[i + 1].t) { a = kfs[i]; b = kfs[i + 1]; break; } }
+    const pos = U.clamp((t - a.t) / Math.max(1, b.t - a.t), 0, 1);
+    const e = (U.ease[b.easing] || U.ease.inOutCubic)(pos);
+    KEYFRAME_PROPS.forEach(p => { out[p] = U.lerp(val(a, p), val(b, p), e); });
+    return out;
+  }
+
+  /** Geometría efectiva (keyframes → interpolada; si no, la del propio elemento). */
+  function effectiveGeom(el, t) { return kfGeom(el, t == null ? S.runtime.t : t) || geomOf(el); }
+
+  function kfAt(el, t, eps) {
+    const list = el.keyframes || [], lim = eps == null ? KF_EPS : eps;
+    let best = null, bd = Infinity;
+    list.forEach(k => { const d = Math.abs(k.t - t); if (d <= lim && d < bd) { bd = d; best = k; } });
+    return best;
+  }
+  const activeKeyframe = (el) => (el.keyframes && el.keyframes.length) ? kfAt(el, S.runtime.t) : null;
+  const hasKeyframes = () => selected().some(e => e.keyframes && e.keyframes.length);
+
+  /** Escribe geometría. En modo keyframes escribe en el keyframe del cabezal
+   *  (creándolo si no hay ninguno ahí). Devuelve 'kf' o 'base'. */
+  function kfSet(el, patch) {
+    if (!el.keyframes || !el.keyframes.length) { Object.assign(el, patch); touch(); return 'base'; }
+    let kf = kfAt(el, S.runtime.t);
+    if (!kf) {
+      kf = { id: U.uid('kf'), t: Math.round(S.runtime.t), props: Object.assign({}, effectiveGeom(el, S.runtime.t)), easing: 'inOutCubic' };
+      el.keyframes.push(kf); el.keyframes.sort((a, b) => a.t - b.t);
+      emit('keyframes', { created: true, el });
+    }
+    Object.assign(kf.props, patch);
+    touch();
+    return 'kf';
+  }
+
+  /** Captura (upsert) un keyframe en t con la geometría efectiva actual. */
+  function captureKeyframe(t, opts) {
+    const ids = opts && opts.ids;
+    const list = ids ? ids.map(elementById).filter(Boolean) : selected();
+    if (!list.length) return null;
+    const time = Math.max(0, Math.round(t == null ? S.runtime.t : t));
+    commit('capturar keyframe', () => {
+      list.forEach(el => {
+        el.keyframes = el.keyframes || [];
+        const v = Object.assign({}, effectiveGeom(el, time));
+        const ex = kfAt(el, time);
+        if (ex) ex.props = v;
+        else { el.keyframes.push({ id: U.uid('kf'), t: time, props: v, easing: 'inOutCubic' }); el.keyframes.sort((a, b) => a.t - b.t); }
+      });
+    });
+    emit('keyframes', { captured: true, t: time });
+    return time;
+  }
+
+  /** Geometría "cocida" en el elemento al desactivar el modo keyframes. */
+  function bakeGeom(el) {
+    const g = effectiveGeom(el, S.runtime.t);
+    return { x: Math.round(g.x), y: Math.round(g.y), w: Math.round(g.w), h: Math.round(g.h), rotation: U.round(g.rotation || 0, 2), opacity: U.round(g.opacity == null ? 1 : g.opacity, 3) };
+  }
+
+  function deleteKeyframe(kfId) {
+    const list = selected(); if (!list.length) return;
+    commit('borrar keyframe', () => list.forEach(el => {
+      if (!el.keyframes || !el.keyframes.length) return;
+      el.keyframes = el.keyframes.filter(k => k.id !== kfId);
+      if (!el.keyframes.length) Object.assign(el, bakeGeom(el));
+    }));
+    emit('keyframes', { removed: true });
+  }
+
+  function clearKeyframes() {
+    const list = selected(); if (!list.length) return;
+    commit('borrar keyframes', () => list.forEach(el => {
+      if (!el.keyframes || !el.keyframes.length) return;
+      Object.assign(el, bakeGeom(el)); el.keyframes = [];
+    }));
+    emit('keyframes', { cleared: true });
+  }
+
+  function updateKeyframe(kfId, patch) {
+    const list = selected(); if (!list.length) return;
+    commit('editar keyframe', () => list.forEach(el => {
+      const k = (el.keyframes || []).find(x => x.id === kfId); if (!k) return;
+      if (patch.easing != null && U.ease[patch.easing]) k.easing = patch.easing;
+      if (Number.isFinite(patch.t)) k.t = Math.max(0, Math.round(patch.t));
+      el.keyframes.sort((a, b) => a.t - b.t);
+      el.keyframes = el.keyframes.filter((kk, i) => i === 0 || kk.t > el.keyframes[i - 1].t);
+    }));
+    emit('keyframes', { updated: true });
+  }
+
+  /** Tiempos de keyframe de la selección, ordenados y únicos. */
+  function keyframeTimes() {
+    const set = new Set();
+    selected().forEach(e => (e.keyframes || []).forEach(k => set.add(k.t)));
+    return Array.from(set).sort((a, b) => a - b);
+  }
+
   /* ---- scenes ---- */
   function setScene(id) { S.sel.sceneId = id; S.sel.ids = []; S.runtime.t = settleTime(scene()); emit('selection'); emit('scene'); emit('project'); emit('time'); }
   /** change scene without firing the heavy events (used during playback) */
@@ -266,7 +405,8 @@
   }
   function loadLocal() {
     try {
-      const raw = localStorage.getItem(LS_KEY);
+      let raw = localStorage.getItem(LS_KEY);
+      if (!raw) raw = localStorage.getItem(LS_KEY_OLD); // proyectos guardados con la v3
       if (!raw) return null;
       return migrate(JSON.parse(raw));
     } catch (e) { console.warn('Proyecto local corrupto', e); return null; }
@@ -304,6 +444,7 @@
     out.anim.out = Object.assign({}, def.anim.out, (e.anim && e.anim.out) || {});
     out.id = e.id || U.uid('el');
     if (out.rotation == null) out.rotation = 0;
+    out.keyframes = sanitizeKeyframes(e.keyframes, out); // v3 → v4: sin keyframes = []
     return out;
   }
 
@@ -334,7 +475,7 @@
   }
 
   IS.store = {
-    PROJECT_VERSION, ASPECTS, PALETTE, PALETTE_SERIES, FACTORIES,
+    PROJECT_VERSION, ASPECTS, PALETTE, PALETTE_SERIES, FACTORIES, KEYFRAME_PROPS, KF_EPS,
     get project() { return S.project; },
     get sel() { return S.sel; },
     get runtime() { return S.runtime; },
@@ -344,6 +485,9 @@
     newScene, newProject, loadProject, exportProject, saveLocal, loadLocal, migrate,
     addElement, addTemplateElements, updateElement, updateSelected, deleteSelected, duplicateSelected, moveLayer,
     select, selectAll, setScene, setSceneQuiet, addScene, duplicateScene, deleteScene, moveScene, updateScene, updateSettings,
-    autosave, touch, normalizeScene, normalizeElement
+    autosave, touch, normalizeScene, normalizeElement,
+    // keyframes
+    kfGeom, effectiveGeom, activeKeyframe, hasKeyframes, kfSet, kfAt, captureKeyframe, deleteKeyframe,
+    clearKeyframes, updateKeyframe, keyframeTimes, bakeGeom, sanitizeKeyframes
   };
 })(window.IS = window.IS || {});
